@@ -51,6 +51,16 @@ messages = st.session_state.messages
 if "html_content" not in st.session_state:
     st.session_state.html_content = ""
 
+image_format = {
+    "image/gif": "gif",
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/webp": "webp",
+}
+
+with sidebar:
+    uploaded_file = st.file_uploader("Choose a file", type=image_format.values())
+
 with sidebar:
     st.subheader("チャット")
     for message in messages:
@@ -63,14 +73,28 @@ with sidebar:
                 if not (content["text"] == "OK."):
                     with st.chat_message(message["role"]):
                         st.write(content["text"])
-            else:
-                with st.chat_message(message["role"]):
-                    st.json(content, expanded=False)
+            # else:
+            #     with st.chat_message(message["role"]):
+            #         st.json(content, expanded=False)
 
 if prompt := st.chat_input():
 
     with sidebar:
         user_message = {"role": "user", "content": [{"text": prompt}]}
+
+        if len(messages) == 0 and uploaded_file:
+            user_message = {
+                "role": "user",
+                "content": [
+                    {
+                        "image": {
+                            "format": image_format[uploaded_file.type],
+                            "source": {"bytes": uploaded_file.getvalue()},
+                        }
+                    },
+                    {"text": prompt},
+                ],
+            }
 
         with st.chat_message(user_message["role"]):
             st.write(prompt)
@@ -120,14 +144,15 @@ if prompt := st.chat_input():
         with st.container(border=True):
             if len(st.session_state.html_content) > 0:
                 with main_container:
-                    tab1, tab2 = st.tabs(["Preview", "Source"])
-                    with tab1:
-                        components.html(
-                            html=content["toolUse"]["input"]["html"],
-                            height=480,
-                            scrolling=True,
-                        )
-                    with tab2:
-                        st.markdown(
-                            f'```html\n{content["toolUse"]["input"]["html"]}\n```'
-                        )
+                    with st.container(border=True):
+                        tab1, tab2 = st.tabs(["Preview", "Source"])
+                        with tab1:
+                            components.html(
+                                html=st.session_state.html_content,
+                                height=640,
+                                scrolling=True,
+                            )
+                        with tab2:
+                            st.markdown(
+                                f"```html\n{st.session_state.html_content}\n```"
+                            )
