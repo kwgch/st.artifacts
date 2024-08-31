@@ -39,10 +39,11 @@ tools = {
     "toolChoice": {"auto": {}},
 }
 
-st.title("st.artifacts")
+st.title("st.artifacts (streaming)")
 
 sidebar = st.sidebar
-main_container = st.container()
+with st.container():
+    main_container = st.empty()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -102,44 +103,119 @@ if prompt := st.chat_input():
         messages.append(user_message)
 
         with st.spinner("Generating..."):
-            response = client.converse(
+            role = ""
+            work = {}
+
+            response = client.converse_stream(
                 modelId="us.anthropic.claude-3-haiku-20240307-v1:0",
                 system=[{"text": system_prompt}],
                 messages=messages,
                 toolConfig=tools,
             )
 
-        ai_message = response["output"]["message"]
+            stream = response.get("stream")
+            if stream:
+                for event in stream:
+
+                    if "messageStart" in event:
+                        role = event["messageStart"]["role"]
+
+                    if "contentBlockStart" in event:
+                        contentBlockStart = event["contentBlockStart"]
+                        contentBlockIndex = contentBlockStart["contentBlockIndex"]
+                        if str(contentBlockIndex) not in work:
+                            work[str(contentBlockIndex)] = {}
+                            with sidebar:
+                                work[str(contentBlockIndex)]["st"] = st.empty()
+                        w = work[str(contentBlockIndex)]
+
+                        if "toolUse" in contentBlockStart["start"]:
+                            w["toolUse"] = contentBlockStart["start"]["toolUse"]
+                            w["toolUse"]["input"] = ""
+
+                    if "contentBlockDelta" in event:
+                        contentBlockDelta = event["contentBlockDelta"]
+                        contentBlockIndex = contentBlockDelta["contentBlockIndex"]
+                        if str(contentBlockIndex) not in work:
+                            work[str(contentBlockIndex)] = {}
+                            with sidebar:
+                                work[str(contentBlockIndex)]["st"] = st.empty()
+                        w = work[str(contentBlockIndex)]
+
+                        if "text" in contentBlockDelta["delta"]:
+                            text = contentBlockDelta["delta"]["text"]
+                            if "text" not in w:
+                                w["text"] = ""
+                            w["text"] = w["text"] + text
+                            with work[str(contentBlockIndex)]["st"]:
+                                with st.chat_message("assistant"):
+                                    st.write(w["text"])
+
+                        if "toolUse" in contentBlockDelta["delta"]:
+                            toolUse = contentBlockDelta["delta"]["toolUse"]
+                            w["toolUse"]["input"] = (
+                                w["toolUse"]["input"]
+                                + contentBlockDelta["delta"]["toolUse"]["input"]
+                            )
+
+                    if "contentBlockStop" in event:
+                        contentBlockStop = event["contentBlockStop"]
+                        contentBlockIndex = contentBlockStop["contentBlockIndex"]
+                        w = work[str(contentBlockIndex)]
+
+                        if "toolUse" in w:
+                            import json
+
+                            w["toolUse"]["input"] = json.loads(w["toolUse"]["input"])
+                            st.session_state.html_content = w["toolUse"]["input"]["html"]
+
+                            with main_container:
+                                with st.container(border=True):
+                                    tab1, tab2 = st.tabs(["Preview", "Source"])
+                                    with tab1:
+                                        components.html(
+                                            html=st.session_state.html_content,
+                                            height=640,
+                                            scrolling=True,
+                                        )
+                                    with tab2:
+                                        st.markdown(
+                                            f"```html\n{st.session_state.html_content}\n```"
+                                        )
+
+                    if "messageStop" in event:
+                        pass
+
+                    if "metadata" in event:
+                        pass
+
+        ai_message = {"role": role, "content": []}
+        for key in work.keys():
+            tmp = work[key].copy()
+            del tmp["st"]
+            ai_message["content"].append(tmp)
+
         messages.append(ai_message)
 
-        with st.chat_message(ai_message["role"]):
+        for content in ai_message["content"]:
+            if "toolUse" in content:
+                if content["toolUse"]["name"] == "html_viewer":
+                    st.session_state.html_content = content["toolUse"]["input"]["html"]
 
-            for content in ai_message["content"]:
-                if "toolUse" in content:
-                    if content["toolUse"]["name"] == "html_viewer":
-                        st.session_state.html_content = content["toolUse"]["input"][
-                            "html"
-                        ]
-
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "toolResult": {
-                                        "toolUseId": content["toolUse"]["toolUseId"],
-                                        "content": [{"text": "Done."}],
-                                    }
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "toolResult": {
+                                    "toolUseId": content["toolUse"]["toolUseId"],
+                                    "content": [{"text": "Done."}],
                                 }
-                            ],
-                        }
-                    )
-                    messages.append({"role": "assistant", "content": [{"text": "OK."}]})
-
-                elif "text" in content:
-                    st.write(content["text"])
-                else:
-                    st.json(ai_message["content"], expanded=False)
+                            }
+                        ],
+                    }
+                )
+                messages.append({"role": "assistant", "content": [{"text": "OK."}]})
 
         if len(st.session_state.html_content) > 0:
             with main_container:
